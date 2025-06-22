@@ -1,0 +1,134 @@
+# Ultra-minimal Alpine-based multi-stage Dockerfile for smallest possible image size
+
+# Dependencies stage - install Python dependencies
+FROM python:3.12-alpine as dependencies
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install uv from official Docker image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Install build dependencies for Python packages
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    musl-dev \
+    postgresql-dev \
+    linux-headers \
+    libffi-dev \
+    && apk add --no-cache \
+    postgresql-client
+
+# Set work directory
+WORKDIR /app
+
+# Copy only dependency files
+COPY pyproject.toml uv.lock* ./
+
+# Install Python dependencies with bytecode compilation
+RUN uv sync --frozen --no-cache --extra prod --compile-bytecode
+
+# Clean up build dependencies
+RUN apk del .build-deps
+
+# Build stage - prepare application
+FROM python:3.12-alpine as builder
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Install minimal runtime dependencies
+RUN apk add --no-cache postgresql-client
+
+# Set work directory
+WORKDIR /app
+
+# Copy uv from dependencies stage
+COPY --from=dependencies /bin/uv /bin/uv
+
+# Copy virtual environment from dependencies stage
+COPY --from=dependencies /app/.venv /app/.venv
+
+# Copy source code
+COPY . .
+
+# Collect static files
+RUN uv run python manage.py collectstatic --noinput
+
+# Clean up unnecessary files
+RUN find . -type f -name "*.pyc" -delete \
+    && find . -type d -name "__pycache__" -exec rm -rf {} + \
+    && find . -type f -name "*.po" -delete \
+    && find . -type f -name "*.pot" -delete \
+    && rm -rf .git* \
+    && rm -rf tests/ \
+    && rm -rf docs/ \
+    && rm -rf .pytest_cache/ \
+    && rm -rf .ruff_cache/ \
+    && rm -rf node_modules/ \
+    && rm -rf *.md \
+    && rm -rf Dockerfile* \
+    && rm -rf docker-compose*.yml \
+    && rm -rf Makefile
+
+# Production stage - ultra-minimal runtime
+FROM python:3.12-alpine as production
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Install only essential runtime dependencies
+RUN apk add --no-cache \
+    postgresql-client \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/cache/apk/*
+
+# Create non-root user
+RUN addgroup -g 1000 -S appgroup \
+    && adduser -u 1000 -S appuser -G appgroup
+
+# Set work directory
+WORKDIR /app
+
+# Copy the virtual environment from builder stage
+COPY --from=builder --chown=appuser:appgroup /app/.venv /app/.venv
+
+# Copy application code and static files from builder stage
+COPY --from=builder --chown=appuser:appgroup /app /app
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/media /app/staticfiles \
+    && chown -R appuser:appgroup /app/logs /app/media /app/staticfiles
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=5)" || exit 1
+
+# Run gunicorn with optimized settings for Alpine
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:8000", \
+     "--workers", "2", \
+     "--worker-class", "sync", \
+     "--worker-connections", "1000", \
+     "--timeout", "60", \
+     "--keep-alive", "5", \
+     "--max-requests", "1000", \
+     "--max-requests-jitter", "100", \
+     "--preload", \
+     "--log-level", "info", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "config.wsgi:application"]

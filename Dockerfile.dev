@@ -1,0 +1,40 @@
+FROM python:3.12-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv from official Docker image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Copy uv configuration
+COPY pyproject.toml uv.lock* ./
+
+# Install Python dependencies (including dev extras)
+RUN uv sync --extra dev
+
+# Copy project
+COPY . .
+
+# Create non-root user
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Run development server
+CMD ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]

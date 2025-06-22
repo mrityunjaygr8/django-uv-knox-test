@@ -1,0 +1,130 @@
+version: "3.8"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: uv run python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+      - debug_cache:/tmp
+    ports:
+      - "8000:8000"
+      - "8001:8001"  # Additional port for debugging tools
+    environment:
+      - DEBUG=1
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DATABASE_URL=postgresql://django_user:django_password@db:5432/django_db
+      - DB_HOST=db
+      - DB_NAME=django_db
+      - DB_USER=django_user
+      - DB_PASSWORD=django_password
+      - DB_PORT=5432
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - DJANGO_LOG_LEVEL=DEBUG
+      - SQL_DEBUG=1
+      # Enable Django Debug Toolbar
+      - ENABLE_DEBUG_TOOLBAR=1
+      # Enable verbose logging
+      - LOGGING_LEVEL=DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    # Keep container running even if command fails
+    restart: unless-stopped
+
+  db:
+    image: postgres:15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      POSTGRES_DB: django_db
+      POSTGRES_USER: django_user
+      POSTGRES_PASSWORD: django_password
+      # Enable detailed PostgreSQL logging
+      POSTGRES_INITDB_ARGS: "--auth-host=trust"
+    ports:
+      - "5432:5432"
+    command: >
+      postgres
+      -c log_statement=all
+      -c log_min_duration_statement=0
+      -c log_line_prefix='%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+      -c logging_collector=on
+      -c log_directory='/var/log/postgresql'
+      -c log_filename='postgresql-%Y-%m-%d_%H%M%S.log'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U django_user -d django_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --loglevel verbose
+      --logfile /var/log/redis/redis.log
+    volumes:
+      - redis_data:/data
+      - redis_logs:/var/log/redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Optional: Redis Commander for Redis debugging
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=admin
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+    profiles:
+      - debug-tools
+
+  # Optional: pgAdmin for PostgreSQL debugging
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "8083:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    profiles:
+      - debug-tools
+
+  # Optional: Mailhog for email debugging
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP
+    profiles:
+      - debug-tools
+
+volumes:
+  postgres_data:
+  redis_data:
+  redis_logs:
+  debug_cache:
+  pgadmin_data:
