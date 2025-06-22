@@ -1,0 +1,142 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ./docker/postgres:/docker-entrypoint-initdb.d/
+    environment:
+      POSTGRES_DB: django_db
+      POSTGRES_USER: django_user
+      POSTGRES_PASSWORD: django_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U django_user -d django_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Use tmpfs for faster PostgreSQL operations in development
+    tmpfs:
+      - /var/run/postgresql
+    shm_size: 256mb
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev.optimized
+      target: development
+      cache_from:
+        - uv-django-test:dev-cache
+    image: uv-django-test:dev-cache
+    command: >
+      sh -c "uv run python manage.py migrate --run-syncdb &&
+             uv run python manage.py collectstatic --noinput --clear &&
+             uv run python manage.py runserver 0.0.0.0:8000 --noreload"
+    volumes:
+      # Mount source code for hot reloading
+      - ./apps:/app/apps:cached
+      - ./config:/app/config:cached
+      - ./templates:/app/templates:cached
+      - ./static:/app/static:cached
+      - ./manage.py:/app/manage.py:cached
+      # Mount logs and media with delegated consistency for better performance
+      - ./logs:/app/logs:delegated
+      - ./media:/app/media:delegated
+      # Cache Python bytecode
+      - python-cache:/app/__pycache__:cached
+      - python-cache:/app/.pytest_cache:cached
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=1
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DATABASE_URL=postgresql://django_user:django_password@db:5432/django_db
+      - DB_HOST=db
+      - DB_NAME=django_db
+      - DB_USER=django_user
+      - DB_PASSWORD=django_password
+      - DB_PORT=5432
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - DJANGO_DEBUG=1
+      # Disable Django autoreload to improve performance
+      - DJANGO_AUTORELOAD=0
+      # Enable development optimizations
+      - DJANGO_DEV_OPTIMIZATIONS=1
+    depends_on:
+      db:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    # Use init to handle zombie processes
+    init: true
+    # Restart policy for development
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    # Use tmpfs for Redis operations in development
+    tmpfs:
+      - /tmp
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # File watcher service for automatic reloading
+  file-watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev.optimized
+      target: development
+    command: >
+      sh -c "uv run watchfiles 'uv run python manage.py runserver 0.0.0.0:8001'
+             --ignore-paths '*.pyc,__pycache__,*.log,logs/*,media/*,static/*,.git/*,*.sqlite3'"
+    volumes:
+      - ./apps:/app/apps:cached
+      - ./config:/app/config:cached
+      - ./templates:/app/templates:cached
+      - ./manage.py:/app/manage.py:cached
+    ports:
+      - "8001:8001"
+    environment:
+      - DEBUG=1
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DATABASE_URL=postgresql://django_user:django_password@db:5432/django_db
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    depends_on:
+      - db
+      - web
+    profiles:
+      - watcher
+    init: true
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  python-cache:
+    driver: local
+
+# Network configuration for better performance
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: django-dev

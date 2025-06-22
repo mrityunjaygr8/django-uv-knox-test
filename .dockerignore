@@ -86,6 +86,7 @@ docker-compose*.yml
 .pre-commit-config.yaml
 .ruff_cache/
 .mypy_cache/
+scripts/
 
 # Node.js (if used for frontend assets)
 node_modules/
@@ -113,12 +114,17 @@ logs/
 *.sql
 *.dump
 
+# Development optimization files
+docker-compose.fast.yml
+Dockerfile.dev.optimized
+
 # Testing artifacts
 .pytest_cache/
 test-results/
 
-# Makefile (not needed in production)
+# Makefile and scripts (not needed in production)
 Makefile
+scripts/
 
 # CI/CD files
 .github/

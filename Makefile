@@ -13,6 +13,17 @@ help:
 	@echo "  superuser       Create Django superuser"
 	@echo "  shell           Open Django shell"
 	@echo "  runserver       Start development server"
+	@echo ""
+	@echo "Fast Development Commands:"
+	@echo "  dev-start       Quick start development environment"
+	@echo "  dev-stop        Stop development environment"
+	@echo "  dev-restart     Fast restart web service only"
+	@echo "  dev-logs        Show development logs"
+	@echo "  dev-shell       Open development shell"
+	@echo "  dev-test        Run tests in development environment"
+	@echo "  dev-watch       Start file watcher for auto-reload"
+	@echo ""
+	@echo "Docker Commands:"
 	@echo "  docker-build    Build Docker containers"
 	@echo "  docker-up       Start Docker development environment"
 	@echo "  docker-down     Stop Docker development environment"
@@ -139,6 +150,58 @@ check: format lint test
 docker-setup: docker-build docker-up docker-migrate docker-superuser
 	@echo "Docker development environment setup complete!"
 
+# Fast development setup
+dev-setup: dev-start dev-migrate dev-superuser
+	@echo "Fast development environment setup complete!"
+	@echo "Access your app at: http://localhost:8000"
+
+# Development workflow with fast commands
+dev-check: dev-test format lint
+	@echo "Development checks passed!"
+
+# Fast Development Commands
+dev-start:
+	./scripts/dev.sh start
+
+dev-stop:
+	./scripts/dev.sh stop
+
+dev-restart:
+	./scripts/dev.sh restart
+
+dev-logs:
+	./scripts/dev.sh logs
+
+dev-shell:
+	./scripts/dev.sh shell
+
+dev-django-shell:
+	./scripts/dev.sh shell django
+
+dev-test:
+	./scripts/dev.sh test
+
+dev-watch:
+	./scripts/dev.sh watch
+
+dev-build:
+	./scripts/dev.sh build
+
+dev-build-force:
+	./scripts/dev.sh build --force
+
+dev-migrate:
+	./scripts/dev.sh migrate
+
+dev-makemigrations:
+	./scripts/dev.sh makemigrations
+
+dev-superuser:
+	./scripts/dev.sh manage createsuperuser
+
+dev-cleanup:
+	./scripts/dev.sh cleanup
+
 # Database backup and restore (for development)
 backup-db:
 	docker-compose exec db pg_dump -U django_user django_db > backup.sql
@@ -146,8 +209,17 @@ backup-db:
 restore-db:
 	docker-compose exec -T db psql -U django_user django_db < backup.sql
 
+dev-backup:
+	./scripts/dev.sh db backup
+
+dev-restore:
+	./scripts/dev.sh db restore $(FILE)
+
 # Reset development environment
 reset: docker-down clean
 	docker-compose up --build -d
 	$(MAKE) docker-migrate
 	@echo "Development environment reset complete!"
+
+dev-reset:
+	./scripts/dev.sh db reset

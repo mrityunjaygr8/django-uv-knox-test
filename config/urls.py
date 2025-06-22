@@ -18,12 +18,19 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 
 # Create a router for DRF ViewSets
 router = DefaultRouter()
 
+# Health check view
+def health_check(request):
+    """Simple health check endpoint for Docker health checks."""
+    return JsonResponse({"status": "healthy", "service": "django"})
+
 urlpatterns = [
+    path("health/", health_check, name="health_check"),
     path("admin/", admin.site.urls),
     path("api/", include(router.urls)),
     path("api/auth/", include("rest_framework.urls")),
